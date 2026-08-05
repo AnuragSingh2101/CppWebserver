@@ -10,40 +10,31 @@ using namespace std;
 WSADATA wsaData;
 
 // Initialize Winsock
-bool initializeWinsock()
-{
+bool initializeWinsock(){
     int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-    if (result != 0)
-    {
+    if (result != 0){
         cerr << "WSAStartup failed. Error Code: " << result << endl;
         return false;
     }
-
     cout << "Winsock Initialized Successfully!" << endl;
     return true;
 }
 
-int main()
-{
+int main(){
     // Step 1: Initialize Winsock
-    if (!initializeWinsock())
-    {
+    if (!initializeWinsock()){
         return 1;
     }
 
     // Step 2: Create TCP Server Socket
     SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-    if (serverSocket == INVALID_SOCKET)
-    {
-        cerr << "Socket creation failed. Error Code: "
-             << WSAGetLastError() << endl;
+    if (serverSocket == INVALID_SOCKET){
+        cerr << "Socket creation failed. Error Code: " << WSAGetLastError() << endl;
 
         WSACleanup();
         return 1;
     }
-
     cout << "Server Socket Created Successfully!" << endl;
 
     // Step 3: Bind Socket
@@ -53,12 +44,8 @@ int main()
     serverAddress.sin_addr.s_addr = htonl(INADDR_ANY);
     serverAddress.sin_port = htons(8080);
 
-    if (bind(serverSocket,
-             (sockaddr*)&serverAddress,
-             sizeof(serverAddress)) == SOCKET_ERROR)
-    {
-        cerr << "Bind failed. Error Code: "
-             << WSAGetLastError() << endl;
+    if (bind(serverSocket, (sockaddr*)&serverAddress, sizeof(serverAddress)) == SOCKET_ERROR){
+        cerr << "Bind failed. Error Code: " << WSAGetLastError() << endl;
 
         closesocket(serverSocket);
         WSACleanup();
@@ -70,10 +57,8 @@ int main()
     cout << "Port : 8080" << endl;
 
     // Step 4: Listen
-    if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR)
-    {
-        cerr << "Listen failed. Error Code: "
-             << WSAGetLastError() << endl;
+    if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR){
+        cerr << "Listen failed. Error Code: " << WSAGetLastError() << endl;
 
         closesocket(serverSocket);
         WSACleanup();
@@ -85,42 +70,31 @@ int main()
 
     // Step 5: Accept Client
     SOCKET clientSocket = accept(serverSocket, nullptr, nullptr);
-
-    if (clientSocket == INVALID_SOCKET)
-    {
-        cerr << "Accept failed. Error Code: "
-             << WSAGetLastError() << endl;
+    if (clientSocket == INVALID_SOCKET){
+        cerr << "Accept failed. Error Code: " << WSAGetLastError() << endl;
 
         closesocket(serverSocket);
         WSACleanup();
         return 1;
     }
-
     cout << "Client Connected!" << endl;
 
     // Step 6: Receive HTTP Request
     char buffer[4096] = {0};
-
     int bytesReceived = recv(
         clientSocket,
         buffer,
         sizeof(buffer) - 1,
         0);
 
-    if (bytesReceived == SOCKET_ERROR)
-    {
-        cerr << "Receive failed. Error Code: "
-             << WSAGetLastError() << endl;
-    }
-    else
-    {
+    if (bytesReceived == SOCKET_ERROR){
+        cerr << "Receive failed. Error Code: " << WSAGetLastError() << endl;
+    }else{
         cout << "\n===== HTTP REQUEST =====\n";
         cout << buffer << endl;
 
-        cout << "Bytes Received : "
-             << bytesReceived
-             << endl;
-    }
+        cout << "Bytes Received : " << bytesReceived << endl;
+}
 
     // Step 7: Send HTTP Response
     const char* response =
@@ -137,10 +111,8 @@ int main()
         strlen(response),
         0);
 
-    if (bytesSent == SOCKET_ERROR)
-    {
-        cerr << "Send failed. Error Code: "
-             << WSAGetLastError() << endl;
+    if (bytesSent == SOCKET_ERROR){
+        cerr << "Send failed. Error Code: " << WSAGetLastError() << endl;
     }
     else
     {
