@@ -5,7 +5,6 @@ A professional, high-performance, single-threaded HTTP/1.1 static file web serve
 This document serves as both standard repository documentation and a **comprehensive technical interview revision sheet** for low-level systems programming, networking, and Windows systems development.
 
 ---
-
 ## 📂 Folder Structure
 
 The project maintains a clean separation of concerns, separating client request parsing, routing configurations, application entry point, and static public assets:
