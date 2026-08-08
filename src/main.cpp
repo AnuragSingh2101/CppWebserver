@@ -7,6 +7,7 @@
 #include "router.h"
 #include "file_handler.h"
 #include "http_response.h"
+#include "route_handler.h"
 
 using namespace std;
 
@@ -60,63 +61,9 @@ void handleClient(SOCKET clientSocket)
     cout << "Path    : " << request.getPath() << endl;
     cout << "Version : " << request.getVersion() << endl;
 
-    // Directory Traversal Protection
-    if (request.getPath().find("..") != string::npos)
-    {
-        cout << "403 Forbidden (Directory Traversal Attempt)"
-             << endl;
-
-        HttpResponse response(403, "Forbidden", "text/plain", "403 Forbidden");
-        string responseStr = response.toString();
-
-        send(
-            clientSocket,
-            responseStr.c_str(),
-            static_cast<int>(responseStr.size()),
-            0);
-
-        closesocket(clientSocket);
-        return;
-    }
-
-    // Router
-    string filePath = Router::getFilePath(
-        request.getPath());
-
-    cout << "Requested File : "
-         << filePath << endl;
-
-    string responseStr;
-
-    // Route not found
-    if (filePath.empty()){
-        cout << "404 Not Found (Route)" << endl;
-
-        HttpResponse response(404, "Not Found", "text/plain", "404 Not Found");
-        responseStr = response.toString();
-    }
-    else{
-        // Read File
-        string fileContent;
-        if (!FileHandler::readFile(filePath, fileContent)){
-            cout << "404 Not Found (File Missing)"
-                 << endl;
-
-            HttpResponse response(404, "Not Found", "text/plain", "404 Not Found");
-            responseStr = response.toString();
-        }else{
-            string mimeType =
-                Router::getMimeType(filePath);
-
-            HttpResponse response(200, "OK", mimeType, fileContent);
-            responseStr = response.toString();
-
-            cout << "\n===== FILE CONTENT ====="
-                 << endl;
-
-            cout << fileContent << endl;
-        }
-    }
+    // Route request and generate response
+    HttpResponse response = RouteHandler::handleRequest(request);
+    string responseStr = response.toString();
 
     cout << "\nBytes Received : "
          << bytesReceived << endl;
