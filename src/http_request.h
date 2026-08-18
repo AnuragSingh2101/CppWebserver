@@ -14,6 +14,10 @@ private:
     unordered_map<string, string> queryParams;
 
     void parseQueryParams();
+    
+    unordered_map<string, string> headers;
+    string body;
+    void parse(const string& request);
 
 public:
     HttpRequest(const string& rawRequest);
@@ -22,6 +26,10 @@ public:
     string getVersion() const;
     string getQueryString() const;
     string getQueryParameter(const string& key) const;
+
+    string getHeader(const string& name) const;
+    string getBody() const;
+
 };
 
 #endif
