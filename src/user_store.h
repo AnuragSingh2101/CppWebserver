@@ -29,6 +29,20 @@ public:
         const std::string& email
     );
 
+    // Update user (PUT)
+    static User* updateUser(
+        int id,
+        const std::string& name,
+        const std::string& email
+    );
+
+    // Patch user (PATCH)
+    static User* patchUser(
+        int id,
+        const std::string& name,
+        const std::string& email
+    );
+
 private:
     static std::vector<User> users;
     static int nextId;

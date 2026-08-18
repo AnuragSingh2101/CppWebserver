@@ -31,6 +31,10 @@ bool initializeWinsock(){
 }
 
 
+constexpr size_t MAX_HEADER_SIZE = 16 * 1024;    // 16 KB
+constexpr size_t MAX_BODY_SIZE = 1024 * 1024;    // 1 MB
+constexpr size_t MAX_REQUEST_SIZE = MAX_HEADER_SIZE + MAX_BODY_SIZE;
+
 bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
 {
     constexpr int BUFFER_SIZE = 4096;
@@ -66,6 +70,14 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
 
         headerEnd =
             requestData.find("\r\n\r\n");
+
+        if (requestData.size() > MAX_HEADER_SIZE)
+        {
+            // Send 413 Payload Too Large
+            string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
+            send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+            return false;
+        }
     }
 
     //--------------------------------------------------------
@@ -98,7 +110,7 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
             lineEnd - (contentLengthPos + 15)
         );
 
-    // Remove leading spaces
+    // Remove leading/trailing spaces/tabs/carriage returns
     while (!lengthValue.empty() &&
            (lengthValue.front() == ' ' ||
             lengthValue.front() == '\t'))
@@ -107,20 +119,47 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
             lengthValue.begin()
         );
     }
+    while (!lengthValue.empty() &&
+           (lengthValue.back() == ' ' ||
+            lengthValue.back() == '\t' ||
+            lengthValue.back() == '\r'))
+    {
+        lengthValue.pop_back();
+    }
 
     int contentLength = 0;
+    bool isContentLengthValid = true;
 
-    try
-    {
-        contentLength =
-            stoi(lengthValue);
+    if (lengthValue.empty()) {
+        isContentLengthValid = false;
+    } else {
+        for (char c : lengthValue) {
+            if (!isdigit(static_cast<unsigned char>(c))) {
+                isContentLengthValid = false;
+                break;
+            }
+        }
     }
-    catch (...)
-    {
-        cerr << "Invalid Content-Length: "
-             << lengthValue
-             << endl;
 
+    if (isContentLengthValid) {
+        try {
+            unsigned long long parsedLen = stoull(lengthValue);
+            if (parsedLen > MAX_BODY_SIZE) {
+                // Send 413 Payload Too Large
+                string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
+                send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+                return false;
+            }
+            contentLength = static_cast<int>(parsedLen);
+        } catch (...) {
+            isContentLengthValid = false;
+        }
+    }
+
+    if (!isContentLengthValid) {
+        // Send 400 Bad Request
+        string response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 22\r\nConnection: close\r\n\r\nInvalid Content-Length";
+        send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
         return false;
     }
 
@@ -133,6 +172,14 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
 
     size_t currentBodySize =
         requestData.size() - bodyStart;
+
+    // Safety check before receiving
+    if (bodyStart + contentLength > MAX_REQUEST_SIZE) {
+        // Send 413 Payload Too Large
+        string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
+        send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+        return false;
+    }
 
     //--------------------------------------------------------
     // Receive remaining body
@@ -163,6 +210,13 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
 
         currentBodySize =
             requestData.size() - bodyStart;
+
+        if (requestData.size() > MAX_REQUEST_SIZE) {
+            // Send 413 Payload Too Large
+            string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
+            send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+            return false;
+        }
     }
 
     //--------------------------------------------------------
@@ -239,6 +293,9 @@ void handleClient(SOCKET clientSocket){
 
     // Route request and generate response
     HttpResponse response = RouteHandler::handleRequest(request);
+    if (request.getMethod() == "HEAD") {
+        response.setSendBody(false);
+    }
     string responseStr = response.toString();
 
     // Step 7: Send Response

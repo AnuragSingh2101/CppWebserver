@@ -15,10 +15,18 @@ public:
         const std::string& body
     );
 
+    HttpResponse(
+        int statusCode,
+        const std::string& contentType,
+        const std::string& body
+    );
+
     void setHeader(
         const std::string& name,
         const std::string& value
     );
+
+    void setSendBody(bool send);
 
     std::string toString() const;
 
@@ -28,6 +36,7 @@ private:
     std::string contentType;
     std::string body;
     std::map<std::string, std::string> headers;
+    bool sendBody = true;
 };
 
 #endif

@@ -143,6 +143,45 @@ namespace {
         }
         return false;
     }
+
+    // Helper function to validate basic email format
+    bool isValidEmail(const string& email) {
+        size_t atPos = email.find('@');
+        if (atPos == string::npos || atPos == 0 || atPos == email.length() - 1) {
+            return false;
+        }
+        // Verify there is only one '@'
+        if (email.find('@', atPos + 1) != string::npos) {
+            return false;
+        }
+        size_t dotPos = email.find('.', atPos + 1);
+        if (dotPos == string::npos || dotPos == atPos + 1 || dotPos == email.length() - 1) {
+            return false;
+        }
+        return true;
+    }
+
+    // Helper function to escape JSON output strings
+    string escapeJsonString(const string& input) {
+        ostringstream ss;
+        for (char c : input) {
+            switch (c) {
+                case '"':  ss << "\\\""; break;
+                case '\\': ss << "\\\\"; break;
+                case '\n': ss << "\\n"; break;
+                case '\r': ss << "\\r"; break;
+                case '\t': ss << "\\t"; break;
+                default:
+                    if (static_cast<unsigned char>(c) < 32) {
+                        ss << "\\u" << setfill('0') << setw(4) << hex << static_cast<int>(c);
+                    } else {
+                        ss << c;
+                    }
+                    break;
+            }
+        }
+        return ss.str();
+    }
 }
 
 // Global user store
@@ -156,9 +195,84 @@ UserStore userStore;
 HttpResponse RouteHandler::handleRequest(
     const HttpRequest& request)
 {
-    const string method = request.getMethod();
+    const string rawMethod = request.getMethod();
     const string path = request.getPath();
+    const string version = request.getVersion();
 
+    // ========================================================
+    // Request Validation
+    // ========================================================
+    if (rawMethod.empty())
+    {
+        return badRequest("Missing HTTP method");
+    }
+    if (path.empty())
+    {
+        return badRequest("Missing request path");
+    }
+    if (version.empty())
+    {
+        return badRequest("Missing HTTP version");
+    }
+
+    // ========================================================
+    // HTTP Method Validation
+    // ========================================================
+    if (rawMethod != "GET" && rawMethod != "POST" && rawMethod != "PUT" &&
+        rawMethod != "DELETE" && rawMethod != "PATCH" && rawMethod != "HEAD" &&
+        rawMethod != "OPTIONS")
+    {
+        return HttpResponse(501, "text/plain", "Not Implemented");
+    }
+
+    // ========================================================
+    // HTTP Version Validation
+    // ========================================================
+    if (version != "HTTP/1.1")
+    {
+        return HttpResponse(
+            505,
+            "HTTP Version Not Supported",
+            "text/plain",
+            "HTTP Version Not Supported"
+        );
+    }
+
+    // ========================================================
+    // OPTIONS Support
+    // ========================================================
+    if (rawMethod == "OPTIONS")
+    {
+        if (path == "/hello")
+        {
+            HttpResponse response(204, "text/plain", "");
+            response.setHeader("Allow", "GET, POST, OPTIONS");
+            return response;
+        }
+        if (path == "/api/users")
+        {
+            HttpResponse response(204, "text/plain", "");
+            response.setHeader("Allow", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+            return response;
+        }
+        if (path == "/api/time" || path == "/api/info" || path == "/about" || path == "/contact")
+        {
+            HttpResponse response(204, "text/plain", "");
+            response.setHeader("Allow", "GET, OPTIONS");
+            return response;
+        }
+        // Fallback for static files
+        const string filePath = Router::getFilePath(path);
+        if (!filePath.empty()) {
+            HttpResponse response(204, "text/plain", "");
+            response.setHeader("Allow", "GET, OPTIONS");
+            return response;
+        }
+        return notFound("404 Not Found");
+    }
+
+    // Map HEAD to GET internally for routing logic below
+    const string method = (rawMethod == "HEAD") ? "GET" : rawMethod;
 
     // ========================================================
     // Security: Prevent Directory Traversal
@@ -166,11 +280,8 @@ HttpResponse RouteHandler::handleRequest(
 
     if (path.find("..") != string::npos)
     {
-        return HttpResponse(
-            403,
-            "Forbidden",
-            "text/plain",
-            "403 Forbidden"
+        return forbidden(
+            "Directory traversal is not allowed"
         );
     }
 
@@ -445,12 +556,7 @@ HttpResponse RouteHandler::handleRequest(
                 if (!isdigit(
                         static_cast<unsigned char>(c)))
                 {
-                    return HttpResponse(
-                        400,
-                        "Bad Request",
-                        "text/plain",
-                        "Invalid user id"
-                    );
+                    return badRequest("Invalid user id");
                 }
             }
 
@@ -465,12 +571,7 @@ HttpResponse RouteHandler::handleRequest(
 
             if (user == nullptr)
             {
-                return HttpResponse(
-                    404,
-                    "Not Found",
-                    "text/plain",
-                    "User not found"
-                );
+                return notFound("User not found");
             }
 
 
@@ -480,10 +581,10 @@ HttpResponse RouteHandler::handleRequest(
                 to_string(user->id) +
                 ","
                 "\"name\":\"" +
-                user->name +
+                escapeJsonString(user->name) +
                 "\","
                 "\"email\":\"" +
-                user->email +
+                escapeJsonString(user->email) +
                 "\""
                 "}";
 
@@ -518,10 +619,10 @@ HttpResponse RouteHandler::handleRequest(
                 to_string(users[i].id) +
                 ","
                 "\"name\":\"" +
-                users[i].name +
+                escapeJsonString(users[i].name) +
                 "\","
                 "\"email\":\"" +
-                users[i].email +
+                escapeJsonString(users[i].email) +
                 "\""
                 "}";
 
@@ -552,6 +653,13 @@ HttpResponse RouteHandler::handleRequest(
     if (path == "/api/users" &&
         method == "POST")
     {
+        // Content-Type validation
+        string contentType = request.getHeader("Content-Type");
+        if (contentType.find("application/json") == string::npos)
+        {
+            return HttpResponse(415, "Unsupported Media Type", "text/plain", "Unsupported Media Type");
+        }
+
         string body =
             request.getBody();
 
@@ -575,12 +683,7 @@ HttpResponse RouteHandler::handleRequest(
         if (firstNonSpace == string::npos || lastNonSpace == string::npos ||
             body[firstNonSpace] != '{' || body[lastNonSpace] != '}')
         {
-            return HttpResponse(
-                400,
-                "Bad Request",
-                "text/plain",
-                "Invalid JSON"
-            );
+            return badRequest("Invalid JSON");
         }
 
         string name;
@@ -589,41 +692,33 @@ HttpResponse RouteHandler::handleRequest(
         // Try extracting name
         if (!hasJsonKey(body, "name"))
         {
-            return HttpResponse(
-                400,
-                "Bad Request",
-                "text/plain",
-                "Missing name"
-            );
+            return badRequest("Missing name");
         }
         if (!extractJsonString(body, "name", name))
         {
-            return HttpResponse(
-                400,
-                "Bad Request",
-                "text/plain",
-                "Invalid JSON"
-            );
+            return badRequest("Invalid JSON");
+        }
+        if (name.empty())
+        {
+            return badRequest("Missing name");
         }
 
         // Try extracting email
         if (!hasJsonKey(body, "email"))
         {
-            return HttpResponse(
-                400,
-                "Bad Request",
-                "text/plain",
-                "Missing email"
-            );
+            return badRequest("Missing email");
         }
         if (!extractJsonString(body, "email", email))
         {
-            return HttpResponse(
-                400,
-                "Bad Request",
-                "text/plain",
-                "Invalid JSON"
-            );
+            return badRequest("Invalid JSON");
+        }
+        if (email.empty())
+        {
+            return badRequest("Missing email");
+        }
+        if (!isValidEmail(email))
+        {
+            return badRequest("Invalid email");
         }
 
 
@@ -644,10 +739,10 @@ HttpResponse RouteHandler::handleRequest(
             to_string(newUser.id) +
             ","
             "\"name\":\"" +
-            newUser.name +
+            escapeJsonString(newUser.name) +
             "\","
             "\"email\":\"" +
-            newUser.email +
+            escapeJsonString(newUser.email) +
             "\""
             "}";
 
@@ -658,6 +753,191 @@ HttpResponse RouteHandler::handleRequest(
             "application/json",
             json
         );
+    }
+
+
+    // ========================================================
+    // PUT /api/users?id=N
+    // ========================================================
+
+    if (path == "/api/users" &&
+        method == "PUT")
+    {
+        // Content-Type validation
+        string contentType = request.getHeader("Content-Type");
+        if (contentType.find("application/json") == string::npos)
+        {
+            return HttpResponse(415, "Unsupported Media Type", "text/plain", "Unsupported Media Type");
+        }
+
+        string idString = request.getQueryParameter("id");
+        if (idString.empty())
+        {
+            return badRequest("Missing user id");
+        }
+        for (char c : idString)
+        {
+            if (!isdigit(static_cast<unsigned char>(c)))
+            {
+                return badRequest("Invalid user id");
+            }
+        }
+        int id = stoi(idString);
+
+        string body = request.getBody();
+
+        // Basic JSON validation
+        size_t firstNonSpace = body.find_first_not_of(" \t\r\n");
+        size_t lastNonSpace = body.find_last_not_of(" \t\r\n");
+        if (firstNonSpace == string::npos || lastNonSpace == string::npos ||
+            body[firstNonSpace] != '{' || body[lastNonSpace] != '}')
+        {
+            return badRequest("Invalid JSON");
+        }
+
+        string name;
+        string email;
+
+        // Try extracting name
+        if (!hasJsonKey(body, "name"))
+        {
+            return badRequest("Missing name");
+        }
+        if (!extractJsonString(body, "name", name))
+        {
+            return badRequest("Invalid JSON");
+        }
+        if (name.empty())
+        {
+            return badRequest("Missing name");
+        }
+
+        // Try extracting email
+        if (!hasJsonKey(body, "email"))
+        {
+            return badRequest("Missing email");
+        }
+        if (!extractJsonString(body, "email", email))
+        {
+            return badRequest("Invalid JSON");
+        }
+        if (email.empty())
+        {
+            return badRequest("Missing email");
+        }
+        if (!isValidEmail(email))
+        {
+            return badRequest("Invalid email");
+        }
+
+        User* updated = userStore.updateUser(id, name, email);
+        if (updated == nullptr)
+        {
+            return notFound("User not found");
+        }
+
+        string json =
+            "{"
+            "\"id\":" + to_string(updated->id) + ","
+            "\"name\":\"" + escapeJsonString(updated->name) + "\","
+            "\"email\":\"" + escapeJsonString(updated->email) + "\""
+            "}";
+
+        return HttpResponse(200, "application/json", json);
+    }
+
+    // ========================================================
+    // PATCH /api/users?id=N
+    // ========================================================
+
+    if (path == "/api/users" &&
+        method == "PATCH")
+    {
+        // Content-Type validation
+        string contentType = request.getHeader("Content-Type");
+        if (contentType.find("application/json") == string::npos)
+        {
+            return HttpResponse(415, "Unsupported Media Type", "text/plain", "Unsupported Media Type");
+        }
+
+        string idString = request.getQueryParameter("id");
+        if (idString.empty())
+        {
+            return badRequest("Missing user id");
+        }
+        for (char c : idString)
+        {
+            if (!isdigit(static_cast<unsigned char>(c)))
+            {
+                return badRequest("Invalid user id");
+            }
+        }
+        int id = stoi(idString);
+
+        string body = request.getBody();
+
+        // Basic JSON validation
+        size_t firstNonSpace = body.find_first_not_of(" \t\r\n");
+        size_t lastNonSpace = body.find_last_not_of(" \t\r\n");
+        if (firstNonSpace == string::npos || lastNonSpace == string::npos ||
+            body[firstNonSpace] != '{' || body[lastNonSpace] != '}')
+        {
+            return badRequest("Invalid JSON");
+        }
+
+        bool hasName = hasJsonKey(body, "name");
+        bool hasEmail = hasJsonKey(body, "email");
+
+        if (!hasName && !hasEmail)
+        {
+            return badRequest("Invalid JSON");
+        }
+
+        string name = "";
+        string email = "";
+
+        if (hasName)
+        {
+            if (!extractJsonString(body, "name", name))
+            {
+                return badRequest("Invalid JSON");
+            }
+            if (name.empty())
+            {
+                return badRequest("Missing name");
+            }
+        }
+
+        if (hasEmail)
+        {
+            if (!extractJsonString(body, "email", email))
+            {
+                return badRequest("Invalid JSON");
+            }
+            if (email.empty())
+            {
+                return badRequest("Missing email");
+            }
+            if (!isValidEmail(email))
+            {
+                return badRequest("Invalid email");
+            }
+        }
+
+        User* updated = userStore.patchUser(id, name, email);
+        if (updated == nullptr)
+        {
+            return notFound("User not found");
+        }
+
+        string json =
+            "{"
+            "\"id\":" + to_string(updated->id) + ","
+            "\"name\":\"" + escapeJsonString(updated->name) + "\","
+            "\"email\":\"" + escapeJsonString(updated->email) + "\""
+            "}";
+
+        return HttpResponse(200, "application/json", json);
     }
 
 
@@ -678,12 +958,7 @@ HttpResponse RouteHandler::handleRequest(
 
         if (idString.empty())
         {
-            return HttpResponse(
-                400,
-                "Bad Request",
-                "text/plain",
-                "Missing user id"
-            );
+            return badRequest("Missing user id");
         }
 
 
@@ -696,12 +971,7 @@ HttpResponse RouteHandler::handleRequest(
             if (!isdigit(
                     static_cast<unsigned char>(c)))
             {
-                return HttpResponse(
-                    400,
-                    "Bad Request",
-                    "text/plain",
-                    "Invalid user id"
-                );
+                return badRequest("Invalid user id");
             }
         }
 
@@ -720,12 +990,7 @@ HttpResponse RouteHandler::handleRequest(
 
         if (!deleted)
         {
-            return HttpResponse(
-                404,
-                "Not Found",
-                "text/plain",
-                "User not found"
-            );
+            return notFound("User not found");
         }
 
 
@@ -820,12 +1085,7 @@ HttpResponse RouteHandler::handleRequest(
 
     if (filePath.empty())
     {
-        return HttpResponse(
-            404,
-            "Not Found",
-            "text/plain",
-            "404 Not Found"
-        );
+        return notFound("404 Not Found");
     }
 
 
@@ -840,12 +1100,7 @@ HttpResponse RouteHandler::handleRequest(
             filePath,
             fileContent))
     {
-        return HttpResponse(
-            404,
-            "Not Found",
-            "text/plain",
-            "404 Not Found"
-        );
+        return notFound("404 Not Found");
     }
 
 
@@ -938,11 +1193,44 @@ string RouteHandler::contact()
 
 
 // ============================================================
-// Method Not Allowed
+// Centralized Error Response Helpers
 // ============================================================
 
+HttpResponse RouteHandler::badRequest(
+    const string& message)
+{
+    return HttpResponse(
+        400,
+        "Bad Request",
+        "text/plain",
+        message
+    );
+}
+
+HttpResponse RouteHandler::notFound(
+    const string& message)
+{
+    return HttpResponse(
+        404,
+        "Not Found",
+        "text/plain",
+        message
+    );
+}
+
+HttpResponse RouteHandler::forbidden(
+    const string& message)
+{
+    return HttpResponse(
+        403,
+        "Forbidden",
+        "text/plain",
+        message
+    );
+}
+
 HttpResponse RouteHandler::methodNotAllowed(
-    const string& allowedMethod)
+    const string& allowedMethods)
 {
     HttpResponse response(
         405,
@@ -951,10 +1239,20 @@ HttpResponse RouteHandler::methodNotAllowed(
         "Method Not Allowed"
     );
 
-
     response.setHeader(
         "Allow",
-        allowedMethod
+        allowedMethods
     );
     return response;
+}
+
+HttpResponse RouteHandler::payloadTooLarge(
+    const string& message)
+{
+    return HttpResponse(
+        413,
+        "Payload Too Large",
+        "text/plain",
+        message
+    );
 }

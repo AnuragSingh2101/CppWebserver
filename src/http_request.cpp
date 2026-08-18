@@ -96,29 +96,30 @@ void HttpRequest::parse(const string& request){
                 colon + 1
             );
 
-        // Remove leading whitespace
-        while (!value.empty() &&
-               (value.front() == ' ' ||
-                value.front() == '\t'))
-        {
-            value.erase(
-                value.begin()
-            );
+        // Trim leading and trailing whitespace from name
+        while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
+            name.erase(name.begin());
+        }
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
+            name.pop_back();
         }
 
-        headers[name] = value;
+        // Trim leading and trailing whitespace from value
+        while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+            value.erase(value.begin());
+        }
+        while (!value.empty() && (value.back() == ' ' || value.back() == '\t' || value.back() == '\r')) {
+            value.pop_back();
+        }
+
+        // Store header name in lowercase for case-insensitive lookup
+        string lowerName = name;
+        transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+        headers[lowerName] = value;
     }
 
     // Truncate body to Content-Length if specified
-    string contentLengthStr = "";
-    for (const auto& pair : headers) {
-        string lowerKey = pair.first;
-        transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), ::tolower);
-        if (lowerKey == "content-length") {
-            contentLengthStr = pair.second;
-            break;
-        }
-    }
+    string contentLengthStr = getHeader("Content-Length");
     if (!contentLengthStr.empty()) {
         try {
             size_t contentLength = stoul(contentLengthStr);
@@ -165,8 +166,10 @@ string HttpRequest::getQueryParameter(
 // Get Header
 string HttpRequest::getHeader(
     const string& name) const{
+    string lowerName = name;
+    transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
     auto it =
-        headers.find(name);
+        headers.find(lowerName);
 
     if (it == headers.end()){
         return "";

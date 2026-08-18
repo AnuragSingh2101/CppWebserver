@@ -57,3 +57,41 @@ User UserStore::addUser(
     nextId++;
     return newUser;
 }
+
+// Update user (PUT)
+User* UserStore::updateUser(
+    int id,
+    const std::string& name,
+    const std::string& email)
+{
+    User* user = getUserById(id);
+    if (user == nullptr)
+    {
+        return nullptr;
+    }
+    user->name = name;
+    user->email = email;
+    return user;
+}
+
+// Patch user (PATCH)
+User* UserStore::patchUser(
+    int id,
+    const std::string& name,
+    const std::string& email)
+{
+    User* user = getUserById(id);
+    if (user == nullptr)
+    {
+        return nullptr;
+    }
+    if (!name.empty())
+    {
+        user->name = name;
+    }
+    if (!email.empty())
+    {
+        user->email = email;
+    }
+    return user;
+}

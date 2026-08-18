@@ -13,11 +13,27 @@ public:
         const HttpRequest& request
     );
 
-    static HttpResponse methodNotAllowed(
-        const std::string& allowedMethod
+private:
+
+    static HttpResponse badRequest(
+        const std::string& message
     );
 
-private:
+    static HttpResponse notFound(
+        const std::string& message
+    );
+
+    static HttpResponse forbidden(
+        const std::string& message
+    );
+
+    static HttpResponse methodNotAllowed(
+        const std::string& allowedMethods
+    );
+
+    static HttpResponse payloadTooLarge(
+        const std::string& message
+    );
 
     static std::string hello(
         const std::string& name,
