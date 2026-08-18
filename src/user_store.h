@@ -3,6 +3,8 @@
 
 #include <string>
 #include <vector>
+#include <mutex>
+#include <optional>
 
 struct User
 {
@@ -18,7 +20,7 @@ public:
     static std::vector<User> getAllUsers();
 
     // Get one user by ID
-    static User* getUserById(int id);
+    static std::optional<User> getUserById(int id);
 
     // Remove a user
     static bool removeUser(int id);
@@ -30,14 +32,14 @@ public:
     );
 
     // Update user (PUT)
-    static User* updateUser(
+    static std::optional<User> updateUser(
         int id,
         const std::string& name,
         const std::string& email
     );
 
     // Patch user (PATCH)
-    static User* patchUser(
+    static std::optional<User> patchUser(
         int id,
         const std::string& name,
         const std::string& email
@@ -46,6 +48,7 @@ public:
 private:
     static std::vector<User> users;
     static int nextId;
+    static std::mutex storeMutex;
 };
 
 #endif

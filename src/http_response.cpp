@@ -53,6 +53,11 @@ void HttpResponse::setSendBody(bool send)
     sendBody = send;
 }
 
+int HttpResponse::getStatusCode() const
+{
+    return statusCode;
+}
+
 std::string HttpResponse::toString() const
 {
     std::string response =

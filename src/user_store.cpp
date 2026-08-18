@@ -1,6 +1,8 @@
 #include "user_store.h"
 
 #include <vector>
+#include <mutex>
+#include <optional>
 
 // Initial users
 std::vector<User> UserStore::users =
@@ -12,27 +14,33 @@ std::vector<User> UserStore::users =
 // ID for the next newly created user
 int UserStore::nextId = 3;
 
+// Define static mutex
+std::mutex UserStore::storeMutex;
+
 
 // Get all users
 std::vector<User> UserStore::getAllUsers(){
+    std::lock_guard<std::mutex> lock(storeMutex);
     return users;
 }
 
 
 // Get user by ID
-User* UserStore::getUserById(int id){
-    for (User& currentUser : users){
+std::optional<User> UserStore::getUserById(int id){
+    std::lock_guard<std::mutex> lock(storeMutex);
+    for (const User& currentUser : users){
         if (currentUser.id == id){
-            return &currentUser;
+            return currentUser;
         }
     }
 
-    return nullptr;
+    return std::nullopt;
 }
 
 
 // Remove a user
 bool UserStore::removeUser(int id){
+    std::lock_guard<std::mutex> lock(storeMutex);
     for (auto it = users.begin(); it != users.end(); ++it){
         if (it->id == id){
             users.erase(it);
@@ -48,6 +56,7 @@ bool UserStore::removeUser(int id){
 User UserStore::addUser(
     const std::string& name,
     const std::string& email){
+    std::lock_guard<std::mutex> lock(storeMutex);
     User newUser ={
         nextId,
         name,
@@ -59,39 +68,39 @@ User UserStore::addUser(
 }
 
 // Update user (PUT)
-User* UserStore::updateUser(
+std::optional<User> UserStore::updateUser(
     int id,
     const std::string& name,
     const std::string& email)
 {
-    User* user = getUserById(id);
-    if (user == nullptr)
-    {
-        return nullptr;
+    std::lock_guard<std::mutex> lock(storeMutex);
+    for (User& currentUser : users) {
+        if (currentUser.id == id) {
+            currentUser.name = name;
+            currentUser.email = email;
+            return currentUser;
+        }
     }
-    user->name = name;
-    user->email = email;
-    return user;
+    return std::nullopt;
 }
 
 // Patch user (PATCH)
-User* UserStore::patchUser(
+std::optional<User> UserStore::patchUser(
     int id,
     const std::string& name,
     const std::string& email)
 {
-    User* user = getUserById(id);
-    if (user == nullptr)
-    {
-        return nullptr;
+    std::lock_guard<std::mutex> lock(storeMutex);
+    for (User& currentUser : users) {
+        if (currentUser.id == id) {
+            if (!name.empty()) {
+                currentUser.name = name;
+            }
+            if (!email.empty()) {
+                currentUser.email = email;
+            }
+            return currentUser;
+        }
     }
-    if (!name.empty())
-    {
-        user->name = name;
-    }
-    if (!email.empty())
-    {
-        user->email = email;
-    }
-    return user;
+    return std::nullopt;
 }

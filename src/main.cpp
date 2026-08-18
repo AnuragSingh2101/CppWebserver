@@ -2,12 +2,16 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <cstring>
+#include <thread>
+#include <sstream>
 
 #include "http_request.h"
 #include "router.h"
 #include "file_handler.h"
 #include "http_response.h"
 #include "route_handler.h"
+#include "logger.h"
+#include "socket_utils.h"
 
 using namespace std;
 
@@ -60,6 +64,18 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
 
         if (bytesReceived <= 0)
         {
+            if (bytesReceived == SOCKET_ERROR)
+            {
+                int err = WSAGetLastError();
+                if (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK)
+                {
+                    Logger::error("Receive timeout");
+                }
+                else
+                {
+                    Logger::error("Receive error: " + to_string(err));
+                }
+            }
             return false;
         }
 
@@ -75,7 +91,7 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
         {
             // Send 413 Payload Too Large
             string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
-            send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+            sendAll(clientSocket, response);
             return false;
         }
     }
@@ -147,7 +163,7 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
             if (parsedLen > MAX_BODY_SIZE) {
                 // Send 413 Payload Too Large
                 string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
-                send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+                sendAll(clientSocket, response);
                 return false;
             }
             contentLength = static_cast<int>(parsedLen);
@@ -159,7 +175,7 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
     if (!isContentLengthValid) {
         // Send 400 Bad Request
         string response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 22\r\nConnection: close\r\n\r\nInvalid Content-Length";
-        send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+        sendAll(clientSocket, response);
         return false;
     }
 
@@ -177,7 +193,7 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
     if (bodyStart + contentLength > MAX_REQUEST_SIZE) {
         // Send 413 Payload Too Large
         string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
-        send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+        sendAll(clientSocket, response);
         return false;
     }
 
@@ -200,6 +216,18 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
 
         if (bytesReceived <= 0)
         {
+            if (bytesReceived == SOCKET_ERROR)
+            {
+                int err = WSAGetLastError();
+                if (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK)
+                {
+                    Logger::error("Receive timeout");
+                }
+                else
+                {
+                    Logger::error("Receive error: " + to_string(err));
+                }
+            }
             return false;
         }
 
@@ -214,7 +242,7 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
         if (requestData.size() > MAX_REQUEST_SIZE) {
             // Send 413 Payload Too Large
             string response = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large";
-            send(clientSocket, response.c_str(), static_cast<int>(response.size()), 0);
+            sendAll(clientSocket, response);
             return false;
         }
     }
@@ -223,26 +251,13 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
     // Debug: show exactly what was received
     //--------------------------------------------------------
 
-    cout << "\n===== RAW HTTP BODY =====" << endl;
-
-    cout << "["
-         << requestData.substr(
-                bodyStart,
-                contentLength
-            )
-         << "]"
-         << endl;
-
-    cout << "Expected Body Length: "
-         << contentLength
-         << endl;
-
-    cout << "Actual Body Length: "
-         << requestData.substr(
-                bodyStart,
-                contentLength
-            ).size()
-         << endl;
+    std::ostringstream ss;
+    ss << "\n===== RAW HTTP BODY =====\n"
+       << "[" << requestData.substr(bodyStart, contentLength) << "]\n"
+       << "Expected Body Length: " << contentLength << "\n"
+       << "Actual Body Length: " << requestData.substr(bodyStart, contentLength).size() << "\n"
+       << "=========================";
+    Logger::info(ss.str());
 
     return true;
 }
@@ -250,46 +265,50 @@ bool receiveHttpRequest(SOCKET clientSocket, string& requestData)
 
 // Handle single client connection
 void handleClient(SOCKET clientSocket){
-    cout << "\n==========================================" << endl;
-    cout << "Client Connected!" << endl;
+    // Set socket receive and send timeouts to 5000ms
+    int timeout = 5000;
+    if (setsockopt(
+            clientSocket,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            reinterpret_cast<const char*>(&timeout),
+            sizeof(timeout)) == SOCKET_ERROR)
+    {
+        Logger::error("Failed to set SO_RCVTIMEO");
+    }
+    if (setsockopt(
+            clientSocket,
+            SOL_SOCKET,
+            SO_SNDTIMEO,
+            reinterpret_cast<const char*>(&timeout),
+            sizeof(timeout)) == SOCKET_ERROR)
+    {
+        Logger::error("Failed to set SO_SNDTIMEO");
+    }
+
+    Logger::info("Client connected");
 
     // Step 6: Receive HTTP Request
     string rawRequest;
     if (!receiveHttpRequest(clientSocket, rawRequest)){
-        cerr << "Failed to receive HTTP request." << endl;
         closesocket(clientSocket);
+        Logger::info("Client disconnected");
         return;
     }
     HttpRequest request(rawRequest);
 
-    cout << "\n===== PARSED HTTP REQUEST =====" << endl;
-    cout << "Method  : "
-        << request.getMethod()
-        << endl;
-
-    cout << "Path    : "
-        << request.getPath()
-        << endl;
-
-    cout << "Query   : "
-        << request.getQueryString()
-        << endl;
-
-    cout << "Version : "
-        << request.getVersion()
-        << endl;
-
-    cout << "Content-Type : "
-        << request.getHeader("Content-Type")
-        << endl;
-
-    cout << "Content-Length : "
-        << request.getHeader("Content-Length")
-        << endl;
-
-    cout << "Body : "
-        << request.getBody()
-        << endl;
+    // Dynamic request diagnostic logging in a synchronized log block
+    std::ostringstream ss;
+    ss << "\n===== PARSED HTTP REQUEST =====\n"
+       << "Method  : " << request.getMethod() << "\n"
+       << "Path    : " << request.getPath() << "\n"
+       << "Query   : " << request.getQueryString() << "\n"
+       << "Version : " << request.getVersion() << "\n"
+       << "Content-Type : " << request.getHeader("Content-Type") << "\n"
+       << "Content-Length : " << request.getHeader("Content-Length") << "\n"
+       << "Body : " << request.getBody() << "\n"
+       << "==============================";
+    Logger::info(ss.str());
 
     // Route request and generate response
     HttpResponse response = RouteHandler::handleRequest(request);
@@ -298,25 +317,18 @@ void handleClient(SOCKET clientSocket){
     }
     string responseStr = response.toString();
 
-    // Step 7: Send Response
-    int bytesSent = send(
-        clientSocket,
-        responseStr.c_str(),
-        static_cast<int>(responseStr.size()),
-        0);
+    // Step 7: Send Response using reliable sendAll
+    bool success = sendAll(clientSocket, responseStr);
 
-    if (bytesSent == SOCKET_ERROR){
-        cerr << "Send failed. Error Code: "
-             << WSAGetLastError() << endl;
+    if (!success){
+        Logger::error("Send failed. Error Code: " + to_string(WSAGetLastError()));
     }else{
-        cout << "Response Sent Successfully!" << endl;
-        cout << "Bytes Sent : "
-             << bytesSent << endl;
+        Logger::info(request.getMethod() + " " + request.getPath() + " -> Response " + to_string(response.getStatusCode()) + " (" + to_string(responseStr.size()) + " bytes)");
     }
 
     // Step 8: Close Client Connection
     closesocket(clientSocket);
-    cout << "Client Disconnected." << endl;
+    Logger::info("Client disconnected");
 }
 
 int main(){
@@ -332,14 +344,13 @@ int main(){
         IPPROTO_TCP);
 
     if (serverSocket == INVALID_SOCKET){
-        cerr << "Socket creation failed. Error Code: "
-             << WSAGetLastError() << endl;
+        Logger::error("Socket creation failed. Error Code: " + to_string(WSAGetLastError()));
 
         WSACleanup();
         return 1;
     }
 
-    cout << "Server Socket Created Successfully!" << endl;
+    Logger::info("Server Socket Created Successfully!");
 
     // Step 3: Bind Socket
     sockaddr_in serverAddress{};
@@ -352,8 +363,7 @@ int main(){
              (sockaddr *)&serverAddress,
              sizeof(serverAddress)) == SOCKET_ERROR)
     {
-        cerr << "Bind failed. Error Code: "
-             << WSAGetLastError() << endl;
+        Logger::error("Bind failed. Error Code: " + to_string(WSAGetLastError()));
 
         closesocket(serverSocket);
         WSACleanup();
@@ -361,13 +371,12 @@ int main(){
         return 1;
     }
 
-    cout << "Socket Bound Successfully!" << endl;
-    cout << "Server running at http://localhost:8080" << endl;
+    Logger::info("Socket Bound Successfully!");
+    Logger::info("Server running at http://localhost:8080");
 
     // Step 4: Listen
     if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR){
-        cerr << "Listen failed. Error Code: "
-             << WSAGetLastError() << endl;
+        Logger::error("Listen failed. Error Code: " + to_string(WSAGetLastError()));
 
         closesocket(serverSocket);
         WSACleanup();
@@ -375,7 +384,7 @@ int main(){
         return 1;
     }
 
-    cout << "Server is Listening..." << endl;
+    Logger::info("Server is Listening...");
 
     // Step 5: Accept Clients Forever
     while (true){
@@ -385,14 +394,14 @@ int main(){
             nullptr);
 
         if (clientSocket == INVALID_SOCKET){
-            cerr << "Accept failed. Error Code: "
-                 << WSAGetLastError() << endl;
+            Logger::error("Accept failed. Error Code: " + to_string(WSAGetLastError()));
 
             continue;
         }
 
-        // Delegate to the specialized handler
-        handleClient(clientSocket);
+        // Spawn a detached worker thread to handle client concurrently
+        std::thread clientThread(handleClient, clientSocket);
+        clientThread.detach();
     }
 
     // Graceful Shutdown
@@ -400,7 +409,7 @@ int main(){
     closesocket(serverSocket);
     WSACleanup();
 
-    cout << "Server Socket Closed." << endl;
-    cout << "Winsock Cleaned Up Successfully!" << endl;
+    Logger::info("Server Socket Closed.");
+    Logger::info("Winsock Cleaned Up Successfully!");
     return 0;
 }

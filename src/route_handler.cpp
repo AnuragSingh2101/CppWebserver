@@ -565,26 +565,28 @@ HttpResponse RouteHandler::handleRequest(
                 stoi(idString);
 
 
-            User* user =
+            auto userOpt =
                 userStore.getUserById(id);
 
 
-            if (user == nullptr)
+            if (!userOpt.has_value())
             {
                 return notFound("User not found");
             }
+
+            const User& user = userOpt.value();
 
 
             string json =
                 "{"
                 "\"id\":" +
-                to_string(user->id) +
+                to_string(user.id) +
                 ","
                 "\"name\":\"" +
-                escapeJsonString(user->name) +
+                escapeJsonString(user.name) +
                 "\","
                 "\"email\":\"" +
-                escapeJsonString(user->email) +
+                escapeJsonString(user.email) +
                 "\""
                 "}";
 
@@ -830,17 +832,18 @@ HttpResponse RouteHandler::handleRequest(
             return badRequest("Invalid email");
         }
 
-        User* updated = userStore.updateUser(id, name, email);
-        if (updated == nullptr)
+        auto updatedOpt = userStore.updateUser(id, name, email);
+        if (!updatedOpt.has_value())
         {
             return notFound("User not found");
         }
+        const User& updated = updatedOpt.value();
 
         string json =
             "{"
-            "\"id\":" + to_string(updated->id) + ","
-            "\"name\":\"" + escapeJsonString(updated->name) + "\","
-            "\"email\":\"" + escapeJsonString(updated->email) + "\""
+            "\"id\":" + to_string(updated.id) + ","
+            "\"name\":\"" + escapeJsonString(updated.name) + "\","
+            "\"email\":\"" + escapeJsonString(updated.email) + "\""
             "}";
 
         return HttpResponse(200, "application/json", json);
@@ -924,17 +927,18 @@ HttpResponse RouteHandler::handleRequest(
             }
         }
 
-        User* updated = userStore.patchUser(id, name, email);
-        if (updated == nullptr)
+        auto updatedOpt = userStore.patchUser(id, name, email);
+        if (!updatedOpt.has_value())
         {
             return notFound("User not found");
         }
+        const User& updated = updatedOpt.value();
 
         string json =
             "{"
-            "\"id\":" + to_string(updated->id) + ","
-            "\"name\":\"" + escapeJsonString(updated->name) + "\","
-            "\"email\":\"" + escapeJsonString(updated->email) + "\""
+            "\"id\":" + to_string(updated.id) + ","
+            "\"name\":\"" + escapeJsonString(updated.name) + "\","
+            "\"email\":\"" + escapeJsonString(updated.email) + "\""
             "}";
 
         return HttpResponse(200, "application/json", json);

@@ -28,6 +28,8 @@ public:
 
     void setSendBody(bool send);
 
+    int getStatusCode() const;
+
     std::string toString() const;
 
 private:
