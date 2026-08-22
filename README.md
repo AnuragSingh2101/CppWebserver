@@ -577,4 +577,5 @@ cmake --build build --config Release
 
 ### Q30: What C++11/17/20 features did you use to make the server cleaner and more robust?
 **A:** We used `constexpr` for compile-time buffer configurations, `const` and reference parameters (`const string&`) to avoid unnecessary copying, `std::to_string` for easy header formatting, and clean namespaces to avoid verbose standard library imports.
+
 ---
