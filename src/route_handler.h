@@ -35,6 +35,12 @@ private:
         const std::string& message
     );
 
+    static HttpResponse jsonError(
+        int statusCode,
+        const std::string& code,
+        const std::string& message
+    );
+
     static std::string hello(
         const std::string& name,
         const std::string& age

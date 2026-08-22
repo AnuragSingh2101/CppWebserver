@@ -1,6 +1,6 @@
-# C++ HTTP Web Server from Scratch (Winsock2)
+# C++ Multi-Threaded HTTP Web Server from Scratch (Winsock2)
 
-A professional, high-performance, single-threaded HTTP/1.1 static file web server built from scratch in C++ on Windows. It utilizes the low-level **Windows Sockets 2 (Winsock2)** API to manage network sockets, handle client TCP connections, parse incoming HTTP requests, route paths, serve static assets (HTML, CSS, JS, images), and block directory traversal attacks.
+A professional, high-performance, multi-threaded HTTP/1.1 web server built from scratch in C++ on Windows. It utilizes the low-level **Windows Sockets 2 (Winsock2)** API to manage network sockets, handle client TCP connections concurrently using a custom Thread Pool, parse incoming HTTP requests, route paths, serve static assets (HTML, CSS, JS, images), manage users via a REST API, and block directory traversal attacks.
 
 This document serves as both standard repository documentation and a **comprehensive technical interview revision sheet** for low-level systems programming, networking, and Windows systems development.
 
@@ -13,21 +13,21 @@ The project maintains a clean separation of concerns, separating client request 
 | :--- | :--- |
 | 📁 [src](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src) | Houses the C++ source code files. |
 | 📄 [main.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/main.cpp) | Server entry point: handles Winsock initialization, socket lifecycle (`socket`, `bind`, `listen`, `accept`), client loop, static file loading, and response dispatching. |
-| 📄 [http_request.h](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/http_request.h) | Declares the `HttpRequest` class, representing parsed HTTP request lines. |
-| 📄 [http_request.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/http_request.cpp) | Implements HTTP request parsing using `std::stringstream` to extract the Method, URI, and HTTP Version. |
-| 📄 [router.h](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/router.h) | Declares the static utility `Router` class. |
-| 📄 [router.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/router.cpp) | Maps request URIs to physical files on the disk and determines the corresponding MIME types. |
-| 📁 [public](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/public) | The server's document root containing public static assets. |
-| 📄 [index.html](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/public/index.html) | The primary webpage served at `/` and `/index.html`. |
-| 📄 [style.css](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/public/style.css) | Custom styling for the status UI, served at `/style.css`. |
-| 📄 [script.js](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/public/script.js) | Client-side scripting validating JavaScript execution, served at `/script.js`. |
+| 📁 [concurrency](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/concurrency) | Contains the custom Thread Pool implementation for worker threads. |
+| 📄 [http_request.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/http_request.cpp) | Implements HTTP request parsing (headers, parameters, and body validation). |
+| 📄 [http_response.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/http_response.cpp) | Implements HTTP response building and serialization. |
+| 📄 [router.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/router.cpp) | Maps request URIs to physical files, checks MIME types, and blocks traversal attacks. |
+| 📄 [route_handler.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/route_handler.cpp) | Dispatches endpoints, including User Store operations and performance metrics. |
+| 📄 [user_store.cpp](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/src/user_store.cpp) | In-memory thread-safe user database (supports GET, POST, PUT, PATCH, DELETE). |
+| 📁 [tests](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/tests) | Google Test suite files covering router, user store, request, response, and thread pool logic. |
+| 📁 [public](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/public) | The server's document root containing public static assets (`index.html`, `style.css`, `script.js`). |
 | 📄 [README.md](file:///c:/Users/hp/OneDrive/Desktop/cpp/cpp-webserver/README.md) | This documentation and quick-revision guide. |
 
 ---
 
 ## 🏗️ Project Architecture
 
-The server acts as an event loop executing on a single main thread. It blocks on network calls and processes incoming requests sequentially.
+The server runs an accept-loop on the main thread and distributes connection handling work across worker threads in a pre-allocated **Thread Pool** for concurrent execution, supporting many simultaneous clients without blocking.
 
 ### Architectural Flow
 
@@ -408,30 +408,63 @@ graph TD
 
 ---
 
+## 🔌 REST API Endpoints
+
+The server features a built-in user repository (`UserStore`) and supports standard HTTP methods for user management:
+
+| Endpoint | Method | Description | Payload Example |
+| :--- | :--- | :--- | :--- |
+| `/api/info` | GET | Returns server metadata and performance metrics (active connections, request counts, bytes sent/received). | N/A |
+| `/api/time` | GET | Returns current server time in JSON format. | N/A |
+| `/api/users` | GET | Returns a list of all registered users in JSON. | N/A |
+| `/api/users?id=<num>` or `/api/users/<num>` | GET | Returns details of a specific user by ID. | N/A |
+| `/api/users` | POST | Registers a new user. The email must be unique and valid. | `{"name": "Alice", "email": "alice@example.com"}` |
+| `/api/users?id=<num>` or `/api/users/<num>` | PUT | Fully updates a user's details. | `{"name": "Alice Cooper", "email": "alice.cooper@example.com"}` |
+| `/api/users?id=<num>` or `/api/users/<num>` | PATCH | Partially updates a user's details. | `{"name": "Alice C."}` |
+| `/api/users?id=<num>` or `/api/users/<num>` | DELETE | Deletes a user by ID. | N/A |
+
+---
+
+## 🧪 Testing Suite
+
+The project includes an automated test suite powered by **Google Test** which covers request parsing, response building, router logic, user store operations, and thread pool concurrency.
+
+### Running the Tests
+To run all 16 automated tests:
+```bash
+.\build\webserver_tests.exe
+```
+
+---
+
 ## 🚀 Build & Run
+
+The project uses CMake to configure the build and manage dependencies (like GoogleTest and nlohmann_json).
+
+### Prerequisites
+- CMake (version 3.20 or higher)
+- A C++17 compiler (such as MSVC on Windows or GCC/MinGW)
 
 ### Compilation Commands
 
-Make sure to link the Winsock library (`ws2_32`) during compilation.
+To configure and build the project:
 
-**Using MinGW (g++):**
 ```bash
-g++ -std=c++17 src/main.cpp src/http_request.cpp src/router.cpp -o webserver.exe -lws2_32
-```
+# Configure the build system (downloads and links googletest and nlohmann_json automatically)
+cmake -B build
 
-**Using Microsoft Visual C++ Compiler (cl.exe):**
-```cmd
-cl /EHsc src/main.cpp src/http_request.cpp src/router.cpp /Fe:webserver.exe ws2_32.lib
+# Build both the webserver and the test executable
+cmake --build build --config Release
 ```
 
 ### Execution
 
-1.  Open the terminal, navigate to the folder containing the compiled `webserver.exe` and the `public/` folder.
-2.  Run the server:
-    ```bash
-    .\webserver.exe
-    ```
-3.  Access via web browser: [http://localhost:8080](http://localhost:8080)
+1. Run the server from the project root (where the `public/` directory is located):
+   ```bash
+   .\build\webserver.exe
+   ```
+2. Access the server in your browser at [http://localhost:8080](http://localhost:8080).
+3. Stop the server using `Ctrl+C` (the server handles this signal and shuts down worker threads and sockets gracefully).
 
 ---
 
@@ -446,13 +479,9 @@ cl /EHsc src/main.cpp src/http_request.cpp src/router.cpp /Fe:webserver.exe ws2_
 
 ## 🔮 Future Improvements
 
-*   **Multi-threading:** Spin up thread pools to handle incoming client sockets concurrently instead of blocking the main thread.
-*   **POST Requests:** Parse HTTP request body payloads and write API handler scripts to process form data.
-*   **REST API Support:** Add dynamic routing controllers to return JSON representations of databases.
-*   **JSON Serialization:** Integrate libraries like `nlohmann/json` to compile C++ structs into structured JSON output.
 *   **Caching Headers:** Serve `Cache-Control` headers so clients save static files locally, reducing redundant disk reads.
 *   **HTTPS:** Implement TLS/SSL handshake encryption using OpenSSL wrappers on top of standard sockets.
-*   **Structured Logging:** Write logs to disk with timestamps, client IP addresses, routing paths, and status codes.
+*   **Persistent Storage:** Save users in the `UserStore` to a file (e.g. SQLite or a JSON file) so they persist across restarts.
 *   **Authentication:** Restrict routes by evaluating `Authorization` tokens in HTTP request headers.
 
 ---
@@ -466,7 +495,7 @@ cl /EHsc src/main.cpp src/http_request.cpp src/router.cpp /Fe:webserver.exe ws2_
 **A:** `WSAStartup` initializes the Winsock DLL (`ws2_32.dll`) for the calling process, configuring the socket stack. If omitted, any subsequent socket calls (e.g. `socket()`, `bind()`) fail immediately and return an error.
 
 ### Q3: What is the difference between a blocking and non-blocking socket? How does our server behave?
-**A:** Blocking sockets halt the execution thread until the requested operation completes (e.g. `accept()` waits until a connection arrives, `recv()` waits for data). Non-blocking sockets return immediately with an error (e.g., `WOULDBLOCK`) if the operation cannot complete right away. Our server is blocking and single-threaded.
+**A:** Blocking sockets halt the execution thread until the requested operation completes (e.g. `accept()` waits until a connection arrives, `recv()` waits for data). Non-blocking sockets return immediately with an error (e.g., `WOULDBLOCK`) if the operation cannot complete right away. Our server uses blocking sockets, but scales concurrency by delegating client communication tasks to a Thread Pool.
 
 ### Q4: Explain the difference between TCP and UDP. Why is TCP used for HTTP?
 **A:** TCP is connection-oriented, reliable, and guarantees ordered packet delivery via handshakes and acknowledgments. UDP is connectionless and lightweight, sending packets without verification. HTTP uses TCP because request and response payloads (like HTML/JS files) must be received intact and in the correct order.
@@ -505,7 +534,7 @@ cl /EHsc src/main.cpp src/http_request.cpp src/router.cpp /Fe:webserver.exe ws2_
 **A:** It is a compiler directive for MSVC that instructs the linker to link the Windows Socket import library `ws2_32.lib`. This resolves symbols for Winsock API functions at compile time.
 
 ### Q16: How does the server handle multiple concurrent client requests?
-**A:** Currently, the server processes client requests sequentially on a single thread. While it is processing a request, new connections are queued in the OS backlog. To support true concurrency, the server would need to spin up a new thread or use a thread pool for each accepted client socket.
+**A:** The server listens and accepts connections on the main thread, then immediately enqueues the client socket into a queue managed by a Thread Pool. One of the idle worker threads in the pool picks up the socket, handles the request/response cycle (including keep-alive loops), and closes the socket when done. This prevents blocking new incoming connections.
 
 ### Q17: What is a socket descriptor (SOCKET)? What is its underlying type on Windows vs. Linux?
 **A:** A socket descriptor is a handle returned by the OS to refer to an active network endpoint. In Windows (Winsock), it is typed as `SOCKET` (which is an unsigned integer pointer/descriptor `UINT_PTR`). In Linux, sockets are standard file descriptors, represented by a signed integer (`int`).
@@ -522,8 +551,8 @@ cl /EHsc src/main.cpp src/http_request.cpp src/router.cpp /Fe:webserver.exe ws2_
 ### Q21: What is the difference between send() returning 0, a positive number, and SOCKET_ERROR?
 **A:** A positive return value indicates the number of bytes successfully written to the network interface. `SOCKET_ERROR` (usually `-1`) indicates a network failure occurred. A return value of `0` means the connection was closed gracefully by the remote peer.
 
-### Q22: How would you modify this server to support multi-threading?
-**A:** When `accept()` returns a client socket, instead of handling the request synchronously, we would pass the client socket to a thread pool or spin up a new thread (e.g. using `std::thread`). This thread would parse the request, serve the file, close the client socket, and exit, freeing the main thread to accept new connections immediately.
+### Q22: How is multi-threading implemented in this server?
+**A:** We implemented multi-threading using a custom Thread Pool (`ThreadPool` class) initialized with the number of hardware threads (or a default of 4). When `accept()` returns a client socket, the server enqueues a lambda task that invokes `handleClient(clientSocket)` to the thread pool. Worker threads pull tasks from the queue using a condition variable for thread-safe synchronization.
 
 ### Q23: What are MIME types, and why is the Content-Type header critical for web browsers?
 **A:** MIME types are identifiers (like `text/html`) that tell the browser what type of content is being served. The browser uses this header to determine how to render or process the payload. If the server serves a CSS file as `text/plain`, the browser will refuse to render it as a stylesheet.

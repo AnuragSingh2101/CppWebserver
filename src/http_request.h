@@ -17,6 +17,11 @@ private:
     
     unordered_map<string, string> headers;
     string body;
+    
+    bool valid = true;
+    int errorCode = 200;
+    string errorMessage;
+
     void parse(const string& request);
 
 public:
@@ -30,6 +35,9 @@ public:
     string getHeader(const string& name) const;
     string getBody() const;
 
+    bool isValid() const;
+    int getErrorCode() const;
+    string getErrorMessage() const;
 };
 
 #endif

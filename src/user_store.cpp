@@ -3,6 +3,20 @@
 #include <vector>
 #include <mutex>
 #include <optional>
+#include <algorithm>
+#include <cctype>
+
+namespace {
+    bool iequals(const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
 
 // Initial users
 std::vector<User> UserStore::users =
@@ -53,54 +67,100 @@ bool UserStore::removeUser(int id){
 
 
 // Add a new user
-User UserStore::addUser(
+std::pair<StoreResult, std::optional<User>> UserStore::addUser(
     const std::string& name,
-    const std::string& email){
+    const std::string& email)
+{
     std::lock_guard<std::mutex> lock(storeMutex);
-    User newUser ={
+    
+    // Uniqueness check
+    for (const User& user : users) {
+        if (iequals(user.email, email)) {
+            return {StoreResult::DUPLICATE_EMAIL, std::nullopt};
+        }
+    }
+
+    User newUser = {
         nextId,
         name,
         email
     };
     users.push_back(newUser);
     nextId++;
-    return newUser;
+    return {StoreResult::SUCCESS, newUser};
 }
 
 // Update user (PUT)
-std::optional<User> UserStore::updateUser(
+std::pair<StoreResult, std::optional<User>> UserStore::updateUser(
     int id,
     const std::string& name,
     const std::string& email)
 {
     std::lock_guard<std::mutex> lock(storeMutex);
+    
+    bool found = false;
+    for (const User& user : users) {
+        if (user.id == id) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return {StoreResult::NOT_FOUND, std::nullopt};
+    }
+
+    // Uniqueness check
+    for (const User& user : users) {
+        if (user.id != id && iequals(user.email, email)) {
+            return {StoreResult::DUPLICATE_EMAIL, std::nullopt};
+        }
+    }
+
     for (User& currentUser : users) {
         if (currentUser.id == id) {
             currentUser.name = name;
             currentUser.email = email;
-            return currentUser;
+            return {StoreResult::SUCCESS, currentUser};
         }
     }
-    return std::nullopt;
+    return {StoreResult::NOT_FOUND, std::nullopt};
 }
 
 // Patch user (PATCH)
-std::optional<User> UserStore::patchUser(
+std::pair<StoreResult, std::optional<User>> UserStore::patchUser(
     int id,
     const std::string& name,
     const std::string& email)
 {
     std::lock_guard<std::mutex> lock(storeMutex);
-    for (User& currentUser : users) {
-        if (currentUser.id == id) {
-            if (!name.empty()) {
-                currentUser.name = name;
-            }
-            if (!email.empty()) {
-                currentUser.email = email;
-            }
-            return currentUser;
+
+    bool found = false;
+    User* targetUser = nullptr;
+    for (User& user : users) {
+        if (user.id == id) {
+            found = true;
+            targetUser = &user;
+            break;
         }
     }
-    return std::nullopt;
+    if (!found) {
+        return {StoreResult::NOT_FOUND, std::nullopt};
+    }
+
+    // Uniqueness check if email is updated
+    if (!email.empty()) {
+        for (const User& user : users) {
+            if (user.id != id && iequals(user.email, email)) {
+                return {StoreResult::DUPLICATE_EMAIL, std::nullopt};
+            }
+        }
+    }
+
+    if (!name.empty()) {
+        targetUser->name = name;
+    }
+    if (!email.empty()) {
+        targetUser->email = email;
+    }
+    return {StoreResult::SUCCESS, *targetUser};
 }

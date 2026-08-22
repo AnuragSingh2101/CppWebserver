@@ -1,6 +1,8 @@
 #include "http_response.h"
+#include "http_status.h"
 
 #include <string>
+#include <algorithm>
 
 HttpResponse::HttpResponse(
     int statusCode,
@@ -24,21 +26,7 @@ HttpResponse::HttpResponse(
       body(body),
       sendBody(true)
 {
-    switch (statusCode)
-    {
-        case 200: statusMessage = "OK"; break;
-        case 201: statusMessage = "Created"; break;
-        case 204: statusMessage = "No Content"; break;
-        case 400: statusMessage = "Bad Request"; break;
-        case 403: statusMessage = "Forbidden"; break;
-        case 404: statusMessage = "Not Found"; break;
-        case 405: statusMessage = "Method Not Allowed"; break;
-        case 413: statusMessage = "Payload Too Large"; break;
-        case 415: statusMessage = "Unsupported Media Type"; break;
-        case 500: statusMessage = "Internal Server Error"; break;
-        case 501: statusMessage = "Not Implemented"; break;
-        default:  statusMessage = "OK"; break;
-    }
+    statusMessage = getHttpStatusReason(statusCode);
 }
 
 void HttpResponse::setHeader(
@@ -77,6 +65,7 @@ std::string HttpResponse::toString() const
         std::to_string(body.size()) +
         "\r\n";
 
+    bool hasConnectionHeader = false;
     for (const auto& header : headers)
     {
         response +=
@@ -84,9 +73,19 @@ std::string HttpResponse::toString() const
             ": " +
             header.second +
             "\r\n";
+
+        std::string lowerKey = header.first;
+        std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), ::tolower);
+        if (lowerKey == "connection")
+        {
+            hasConnectionHeader = true;
+        }
     }
 
-    response += "Connection: close\r\n";
+    if (!hasConnectionHeader)
+    {
+        response += "Connection: close\r\n";
+    }
 
     response += "\r\n";
     if (sendBody)

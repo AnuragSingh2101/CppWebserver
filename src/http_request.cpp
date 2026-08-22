@@ -18,6 +18,9 @@ void HttpRequest::parse(const string& request){
     body.clear();
     headers.clear();
     queryParams.clear();
+    valid = true;
+    errorCode = 200;
+    errorMessage.clear();
 
     // Find end of HTTP headers
     size_t headerEnd =
@@ -40,6 +43,9 @@ void HttpRequest::parse(const string& request){
     stringstream stream(headerSection);
     string requestLine;
     if (!getline(stream, requestLine)){
+        valid = false;
+        errorCode = 400;
+        errorMessage = "Empty request line";
         return;
     }
 
@@ -50,6 +56,13 @@ void HttpRequest::parse(const string& request){
 
     stringstream lineStream(requestLine);
     lineStream >> method >> path >> version;
+
+    if (method.empty() || path.empty() || version.empty()) {
+        valid = false;
+        errorCode = 400;
+        errorMessage = "Malformed request line";
+        return;
+    }
 
     // Separate query string
     size_t questionMark =
@@ -72,17 +85,34 @@ void HttpRequest::parse(const string& request){
 
     // Parse headers
     string headerLine;
+    int hostHeaderCount = 0;
+    int headerCount = 0;
     while (getline(stream, headerLine)){
         if (!headerLine.empty() &&
             headerLine.back() == '\r'){
             headerLine.pop_back();
         }
 
+        if (headerLine.empty()) {
+            continue;
+        }
+
+        headerCount++;
+        if (headerCount > 100) {
+            valid = false;
+            errorCode = 400;
+            errorMessage = "Too many headers";
+            return;
+        }
+
         size_t colon =
             headerLine.find(':');
 
         if (colon == string::npos){
-            continue;
+            valid = false;
+            errorCode = 400;
+            errorMessage = "Malformed header line: missing colon";
+            return;
         }
 
         string name =
@@ -104,6 +134,21 @@ void HttpRequest::parse(const string& request){
             name.pop_back();
         }
 
+        if (name.empty()) {
+            valid = false;
+            errorCode = 400;
+            errorMessage = "Empty header name";
+            return;
+        }
+
+        // Validate spaces are not present in header name (RFC 7230 section 3.2.4)
+        if (name.find(' ') != string::npos || name.find('\t') != string::npos) {
+            valid = false;
+            errorCode = 400;
+            errorMessage = "Header name contains invalid whitespace";
+            return;
+        }
+
         // Trim leading and trailing whitespace from value
         while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
             value.erase(value.begin());
@@ -115,7 +160,32 @@ void HttpRequest::parse(const string& request){
         // Store header name in lowercase for case-insensitive lookup
         string lowerName = name;
         transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
-        headers[lowerName] = value;
+
+        if (lowerName == "host") {
+            hostHeaderCount++;
+        }
+
+        if (headers.count(lowerName) > 0) {
+            headers[lowerName] = headers[lowerName] + ", " + value;
+        } else {
+            headers[lowerName] = value;
+        }
+    }
+
+    // Host header validation for HTTP/1.1
+    if (version == "HTTP/1.1") {
+        if (hostHeaderCount == 0) {
+            valid = false;
+            errorCode = 400;
+            errorMessage = "Host header is missing";
+            return;
+        }
+        if (hostHeaderCount > 1) {
+            valid = false;
+            errorCode = 400;
+            errorMessage = "Duplicate Host headers";
+            return;
+        }
     }
 
     // Truncate body to Content-Length if specified
@@ -211,4 +281,16 @@ void HttpRequest::parseQueryParams(){
             queryParams[pair] = "";
         }
     }
+}
+
+bool HttpRequest::isValid() const {
+    return valid;
+}
+
+int HttpRequest::getErrorCode() const {
+    return errorCode;
+}
+
+string HttpRequest::getErrorMessage() const {
+    return errorMessage;
 }

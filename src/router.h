@@ -9,6 +9,7 @@ class Router{
 public:
     static string getFilePath(const string& path);
     static string getMimeType(const string& filePath);
+    static bool urlDecode(const string& src, string& dst);
 };
 
 #endif

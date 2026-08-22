@@ -13,6 +13,12 @@ struct User
     std::string email;
 };
 
+enum class StoreResult {
+    SUCCESS,
+    NOT_FOUND,
+    DUPLICATE_EMAIL
+};
+
 class UserStore
 {
 public:
@@ -26,20 +32,20 @@ public:
     static bool removeUser(int id);
 
     // Add a new user
-    static User addUser(
+    static std::pair<StoreResult, std::optional<User>> addUser(
         const std::string& name,
         const std::string& email
     );
 
     // Update user (PUT)
-    static std::optional<User> updateUser(
+    static std::pair<StoreResult, std::optional<User>> updateUser(
         int id,
         const std::string& name,
         const std::string& email
     );
 
     // Patch user (PATCH)
-    static std::optional<User> patchUser(
+    static std::pair<StoreResult, std::optional<User>> patchUser(
         int id,
         const std::string& name,
         const std::string& email

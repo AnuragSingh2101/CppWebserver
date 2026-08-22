@@ -3,6 +3,7 @@
 #include "file_handler.h"
 #include "router.h"
 #include "user_store.h"
+#include "metrics.h"
 
 #include <chrono>
 #include <ctime>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <cctype>
 #include <iostream>
+#include <nlohmann/json.hpp>
 
 using namespace std;
 
@@ -199,6 +201,28 @@ HttpResponse RouteHandler::handleRequest(
     const string path = request.getPath();
     const string version = request.getVersion();
 
+    // Parse path parameters for /api/users/{id}
+    bool isUserPathWithId = false;
+    int pathId = -1;
+    if (path.rfind("/api/users/", 0) == 0) {
+        string idStr = path.substr(11);
+        bool allDigits = !idStr.empty();
+        for (char c : idStr) {
+            if (!isdigit(static_cast<unsigned char>(c))) {
+                allDigits = false;
+                break;
+            }
+        }
+        if (allDigits) {
+            isUserPathWithId = true;
+            try {
+                pathId = stoi(idStr);
+            } catch (...) {
+                isUserPathWithId = false;
+            }
+        }
+    }
+
     // ========================================================
     // Request Validation
     // ========================================================
@@ -249,7 +273,7 @@ HttpResponse RouteHandler::handleRequest(
             response.setHeader("Allow", "GET, POST, OPTIONS");
             return response;
         }
-        if (path == "/api/users")
+        if (path == "/api/users" || isUserPathWithId)
         {
             HttpResponse response(204, "text/plain", "");
             response.setHeader("Allow", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
@@ -514,512 +538,345 @@ HttpResponse RouteHandler::handleRequest(
     if (path == "/api/info" &&
         method == "GET")
     {
-        string json =
-            "{"
-            "\"name\":\"C++ HTTP Server\","
-            "\"version\":\"1.0.0\","
-            "\"language\":\"C++\","
-            "\"protocol\":\"HTTP/1.1\","
-            "\"port\":8080"
-            "}";
+        nlohmann::json res;
+        res["name"] = "C++ HTTP Server";
+        res["version"] = "1.0.0";
+        res["language"] = "C++";
+        res["protocol"] = "HTTP/1.1";
 
+        auto& m = ServerMetrics::getInstance();
+        nlohmann::json metricsJson;
+        metricsJson["total_requests"] = m.getTotalRequests();
+        metricsJson["successful_requests"] = m.getSuccessfulRequests();
+        metricsJson["client_errors"] = m.getClientErrors();
+        metricsJson["server_errors"] = m.getServerErrors();
+        metricsJson["active_connections"] = m.getActiveConnections();
+        metricsJson["peak_connections"] = m.getPeakConnections();
+        metricsJson["bytes_received"] = m.getBytesReceived();
+        metricsJson["bytes_sent"] = m.getBytesSent();
+        res["metrics"] = metricsJson;
 
         return HttpResponse(
             200,
             "OK",
             "application/json",
-            json
+            res.dump()
         );
     }
 
 
     // ========================================================
-    // GET /api/users
+    // GET, POST, PUT, PATCH, DELETE /api/users
     // ========================================================
 
-    if (path == "/api/users" &&
-        method == "GET")
+    if (path == "/api/users" || isUserPathWithId)
     {
-        string idString =
-            request.getQueryParameter("id");
+        int id = -1;
+        bool hasId = false;
 
+        if (isUserPathWithId) {
+            id = pathId;
+            hasId = true;
+        } else {
+            string idString = request.getQueryParameter("id");
+            if (!idString.empty()) {
+                bool allDigits = true;
+                for (char c : idString) {
+                    if (!isdigit(static_cast<unsigned char>(c))) {
+                        allDigits = false;
+                        break;
+                    }
+                }
+                if (!allDigits) {
+                    return jsonError(400, "INVALID_ID", "User ID must be a positive integer");
+                }
+                try {
+                    id = stoi(idString);
+                    hasId = true;
+                } catch (...) {
+                    return jsonError(400, "INVALID_ID", "User ID is out of range");
+                }
+            }
+        }
 
-        // ----------------------------------------------------
-        // GET /api/users?id=N
-        // ----------------------------------------------------
+        if (id <= 0 && hasId) {
+            return jsonError(400, "INVALID_ID", "User ID must be a positive integer");
+        }
 
-        if (!idString.empty())
-        {
-            // Validate ID
-            for (char c : idString)
-            {
-                if (!isdigit(
-                        static_cast<unsigned char>(c)))
-                {
-                    return badRequest("Invalid user id");
+        // --- GET Method ---
+        if (method == "GET") {
+            if (hasId) {
+                auto userOpt = UserStore::getUserById(id);
+                if (!userOpt.has_value()) {
+                    return jsonError(404, "USER_NOT_FOUND", "User with id " + to_string(id) + " was not found");
+                }
+                const User& user = userOpt.value();
+                nlohmann::json resJson;
+                resJson["id"] = user.id;
+                resJson["name"] = user.name;
+                resJson["email"] = user.email;
+                return HttpResponse(200, "application/json", resJson.dump());
+            } else {
+                auto users = UserStore::getAllUsers();
+                nlohmann::json usersArr = nlohmann::json::array();
+                for (const auto& user : users) {
+                    nlohmann::json uJson;
+                    uJson["id"] = user.id;
+                    uJson["name"] = user.name;
+                    uJson["email"] = user.email;
+                    usersArr.push_back(uJson);
+                }
+                return HttpResponse(200, "application/json", usersArr.dump());
+            }
+        }
+
+        // --- POST Method ---
+        else if (method == "POST") {
+            if (hasId) {
+                return jsonError(400, "INVALID_ID", "Cannot provide an ID when creating a user");
+            }
+            string contentType = request.getHeader("Content-Type");
+            if (contentType.find("application/json") == string::npos) {
+                return jsonError(415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json");
+            }
+
+            nlohmann::json bodyJson;
+            try {
+                bodyJson = nlohmann::json::parse(request.getBody());
+            } catch (...) {
+                return jsonError(400, "INVALID_JSON", "Malformed JSON payload");
+            }
+
+            if (!bodyJson.is_object()) {
+                return jsonError(400, "INVALID_JSON", "JSON body must be an object");
+            }
+
+            if (!bodyJson.contains("name")) {
+                return jsonError(400, "MISSING_FIELD", "Missing required field: name");
+            }
+            if (!bodyJson.contains("email")) {
+                return jsonError(400, "MISSING_FIELD", "Missing required field: email");
+            }
+
+            if (!bodyJson["name"].is_string()) {
+                return jsonError(400, "INVALID_FIELD_TYPE", "Field 'name' must be a string");
+            }
+            if (!bodyJson["email"].is_string()) {
+                return jsonError(400, "INVALID_FIELD_TYPE", "Field 'email' must be a string");
+            }
+
+            string name = bodyJson["name"].get<string>();
+            string email = bodyJson["email"].get<string>();
+
+            // Trim
+            while (!name.empty() && isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
+            while (!name.empty() && isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+            while (!email.empty() && isspace(static_cast<unsigned char>(email.front()))) email.erase(email.begin());
+            while (!email.empty() && isspace(static_cast<unsigned char>(email.back()))) email.pop_back();
+
+            if (name.empty()) {
+                return jsonError(400, "MISSING_FIELD", "Name field cannot be empty");
+            }
+            if (name.size() > 100) {
+                return jsonError(400, "INVALID_EMAIL", "Name exceeds maximum length of 100 characters");
+            }
+            if (email.empty()) {
+                return jsonError(400, "MISSING_FIELD", "Email field cannot be empty");
+            }
+            if (email.size() > 255) {
+                return jsonError(400, "INVALID_EMAIL", "Email exceeds maximum length of 255 characters");
+            }
+            if (!isValidEmail(email)) {
+                return jsonError(400, "INVALID_EMAIL", "Invalid email format");
+            }
+
+            auto addResult = UserStore::addUser(name, email);
+            if (addResult.first == StoreResult::DUPLICATE_EMAIL) {
+                return jsonError(409, "DUPLICATE_EMAIL", "Email address already in use: " + email);
+            }
+
+            const User& newUser = addResult.second.value();
+            nlohmann::json resJson;
+            resJson["id"] = newUser.id;
+            resJson["name"] = newUser.name;
+            resJson["email"] = newUser.email;
+            return HttpResponse(201, "application/json", resJson.dump());
+        }
+
+        // --- PUT Method ---
+        else if (method == "PUT") {
+            if (!hasId) {
+                return jsonError(400, "MISSING_FIELD", "Missing required query parameter or path parameter: id");
+            }
+            string contentType = request.getHeader("Content-Type");
+            if (contentType.find("application/json") == string::npos) {
+                return jsonError(415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json");
+            }
+
+            nlohmann::json bodyJson;
+            try {
+                bodyJson = nlohmann::json::parse(request.getBody());
+            } catch (...) {
+                return jsonError(400, "INVALID_JSON", "Malformed JSON payload");
+            }
+
+            if (!bodyJson.is_object()) {
+                return jsonError(400, "INVALID_JSON", "JSON body must be an object");
+            }
+
+            if (!bodyJson.contains("name")) {
+                return jsonError(400, "MISSING_FIELD", "Missing required field: name");
+            }
+            if (!bodyJson.contains("email")) {
+                return jsonError(400, "MISSING_FIELD", "Missing required field: email");
+            }
+
+            if (!bodyJson["name"].is_string()) {
+                return jsonError(400, "INVALID_FIELD_TYPE", "Field 'name' must be a string");
+            }
+            if (!bodyJson["email"].is_string()) {
+                return jsonError(400, "INVALID_FIELD_TYPE", "Field 'email' must be a string");
+            }
+
+            string name = bodyJson["name"].get<string>();
+            string email = bodyJson["email"].get<string>();
+
+            // Trim
+            while (!name.empty() && isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
+            while (!name.empty() && isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+            while (!email.empty() && isspace(static_cast<unsigned char>(email.front()))) email.erase(email.begin());
+            while (!email.empty() && isspace(static_cast<unsigned char>(email.back()))) email.pop_back();
+
+            if (name.empty()) {
+                return jsonError(400, "MISSING_FIELD", "Name field cannot be empty");
+            }
+            if (name.size() > 100) {
+                return jsonError(400, "INVALID_EMAIL", "Name exceeds maximum length of 100 characters");
+            }
+            if (email.empty()) {
+                return jsonError(400, "MISSING_FIELD", "Email field cannot be empty");
+            }
+            if (email.size() > 255) {
+                return jsonError(400, "INVALID_EMAIL", "Email exceeds maximum length of 255 characters");
+            }
+            if (!isValidEmail(email)) {
+                return jsonError(400, "INVALID_EMAIL", "Invalid email format");
+            }
+
+            auto updateResult = UserStore::updateUser(id, name, email);
+            if (updateResult.first == StoreResult::NOT_FOUND) {
+                return jsonError(404, "USER_NOT_FOUND", "User with id " + to_string(id) + " was not found");
+            }
+            if (updateResult.first == StoreResult::DUPLICATE_EMAIL) {
+                return jsonError(409, "DUPLICATE_EMAIL", "Email address already in use by another user: " + email);
+            }
+
+            const User& updatedUser = updateResult.second.value();
+            nlohmann::json resJson;
+            resJson["id"] = updatedUser.id;
+            resJson["name"] = updatedUser.name;
+            resJson["email"] = updatedUser.email;
+            return HttpResponse(200, "application/json", resJson.dump());
+        }
+
+        // --- PATCH Method ---
+        else if (method == "PATCH") {
+            if (!hasId) {
+                return jsonError(400, "MISSING_FIELD", "Missing required query parameter or path parameter: id");
+            }
+            string contentType = request.getHeader("Content-Type");
+            if (contentType.find("application/json") == string::npos) {
+                return jsonError(415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json");
+            }
+
+            nlohmann::json bodyJson;
+            try {
+                bodyJson = nlohmann::json::parse(request.getBody());
+            } catch (...) {
+                return jsonError(400, "INVALID_JSON", "Malformed JSON payload");
+            }
+
+            if (!bodyJson.is_object()) {
+                return jsonError(400, "INVALID_JSON", "JSON body must be an object");
+            }
+
+            bool hasName = bodyJson.contains("name");
+            bool hasEmail = bodyJson.contains("email");
+
+            if (!hasName && !hasEmail) {
+                return jsonError(400, "MISSING_FIELD", "Must provide name or email field");
+            }
+
+            string name = "";
+            string email = "";
+
+            if (hasName) {
+                if (!bodyJson["name"].is_string()) {
+                    return jsonError(400, "INVALID_FIELD_TYPE", "Field 'name' must be a string");
+                }
+                name = bodyJson["name"].get<string>();
+                while (!name.empty() && isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
+                while (!name.empty() && isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+                if (name.empty()) {
+                    return jsonError(400, "MISSING_FIELD", "Name field cannot be empty");
+                }
+                if (name.size() > 100) {
+                    return jsonError(400, "INVALID_EMAIL", "Name exceeds maximum length of 100 characters");
                 }
             }
 
-
-            int id =
-                stoi(idString);
-
-
-            auto userOpt =
-                userStore.getUserById(id);
-
-
-            if (!userOpt.has_value())
-            {
-                return notFound("User not found");
+            if (hasEmail) {
+                if (!bodyJson["email"].is_string()) {
+                    return jsonError(400, "INVALID_FIELD_TYPE", "Field 'email' must be a string");
+                }
+                email = bodyJson["email"].get<string>();
+                while (!email.empty() && isspace(static_cast<unsigned char>(email.front()))) email.erase(email.begin());
+                while (!email.empty() && isspace(static_cast<unsigned char>(email.back()))) email.pop_back();
+                if (email.empty()) {
+                    return jsonError(400, "MISSING_FIELD", "Email field cannot be empty");
+                }
+                if (email.size() > 255) {
+                    return jsonError(400, "INVALID_EMAIL", "Email exceeds maximum length of 255 characters");
+                }
+                if (!isValidEmail(email)) {
+                    return jsonError(400, "INVALID_EMAIL", "Invalid email format");
+                }
             }
 
-            const User& user = userOpt.value();
-
-
-            string json =
-                "{"
-                "\"id\":" +
-                to_string(user.id) +
-                ","
-                "\"name\":\"" +
-                escapeJsonString(user.name) +
-                "\","
-                "\"email\":\"" +
-                escapeJsonString(user.email) +
-                "\""
-                "}";
-
-
-            return HttpResponse(
-                200,
-                "OK",
-                "application/json",
-                json
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // GET /api/users
-        // ----------------------------------------------------
-
-        vector<User> users =
-            userStore.getAllUsers();
-
-
-        string json = "[";
-
-
-        for (size_t i = 0;
-             i < users.size();
-             i++)
-        {
-            json +=
-                "{"
-                "\"id\":" +
-                to_string(users[i].id) +
-                ","
-                "\"name\":\"" +
-                escapeJsonString(users[i].name) +
-                "\","
-                "\"email\":\"" +
-                escapeJsonString(users[i].email) +
-                "\""
-                "}";
-
-
-            if (i + 1 < users.size())
-            {
-                json += ",";
+            auto patchResult = UserStore::patchUser(id, name, email);
+            if (patchResult.first == StoreResult::NOT_FOUND) {
+                return jsonError(404, "USER_NOT_FOUND", "User with id " + to_string(id) + " was not found");
             }
-        }
-
-
-        json += "]";
-
-
-        return HttpResponse(
-            200,
-            "OK",
-            "application/json",
-            json
-        );
-    }
-
-
-    // ========================================================
-    // POST /api/users
-    // ========================================================
-
-    if (path == "/api/users" &&
-        method == "POST")
-    {
-        // Content-Type validation
-        string contentType = request.getHeader("Content-Type");
-        if (contentType.find("application/json") == string::npos)
-        {
-            return HttpResponse(415, "Unsupported Media Type", "text/plain", "Unsupported Media Type");
-        }
-
-        string body =
-            request.getBody();
-
-
-        cout << "POST /api/users BODY: ["
-             << body
-             << "]"
-             << endl;
-
-
-        cout << "BODY LENGTH: "
-             << body.size()
-             << endl;
-
-
-        // ----------------------------------------------------
-        // Basic JSON validation
-        // ----------------------------------------------------
-        size_t firstNonSpace = body.find_first_not_of(" \t\r\n");
-        size_t lastNonSpace = body.find_last_not_of(" \t\r\n");
-        if (firstNonSpace == string::npos || lastNonSpace == string::npos ||
-            body[firstNonSpace] != '{' || body[lastNonSpace] != '}')
-        {
-            return badRequest("Invalid JSON");
-        }
-
-        string name;
-        string email;
-
-        // Try extracting name
-        if (!hasJsonKey(body, "name"))
-        {
-            return badRequest("Missing name");
-        }
-        if (!extractJsonString(body, "name", name))
-        {
-            return badRequest("Invalid JSON");
-        }
-        if (name.empty())
-        {
-            return badRequest("Missing name");
-        }
-
-        // Try extracting email
-        if (!hasJsonKey(body, "email"))
-        {
-            return badRequest("Missing email");
-        }
-        if (!extractJsonString(body, "email", email))
-        {
-            return badRequest("Invalid JSON");
-        }
-        if (email.empty())
-        {
-            return badRequest("Missing email");
-        }
-        if (!isValidEmail(email))
-        {
-            return badRequest("Invalid email");
-        }
-
-
-        // ----------------------------------------------------
-        // Create user
-        // ----------------------------------------------------
-
-        User newUser =
-            userStore.addUser(
-                name,
-                email
-            );
-
-
-        string json =
-            "{"
-            "\"id\":" +
-            to_string(newUser.id) +
-            ","
-            "\"name\":\"" +
-            escapeJsonString(newUser.name) +
-            "\","
-            "\"email\":\"" +
-            escapeJsonString(newUser.email) +
-            "\""
-            "}";
-
-
-        return HttpResponse(
-            201,
-            "Created",
-            "application/json",
-            json
-        );
-    }
-
-
-    // ========================================================
-    // PUT /api/users?id=N
-    // ========================================================
-
-    if (path == "/api/users" &&
-        method == "PUT")
-    {
-        // Content-Type validation
-        string contentType = request.getHeader("Content-Type");
-        if (contentType.find("application/json") == string::npos)
-        {
-            return HttpResponse(415, "Unsupported Media Type", "text/plain", "Unsupported Media Type");
-        }
-
-        string idString = request.getQueryParameter("id");
-        if (idString.empty())
-        {
-            return badRequest("Missing user id");
-        }
-        for (char c : idString)
-        {
-            if (!isdigit(static_cast<unsigned char>(c)))
-            {
-                return badRequest("Invalid user id");
+            if (patchResult.first == StoreResult::DUPLICATE_EMAIL) {
+                return jsonError(409, "DUPLICATE_EMAIL", "Email address already in use by another user: " + email);
             }
-        }
-        int id = stoi(idString);
 
-        string body = request.getBody();
-
-        // Basic JSON validation
-        size_t firstNonSpace = body.find_first_not_of(" \t\r\n");
-        size_t lastNonSpace = body.find_last_not_of(" \t\r\n");
-        if (firstNonSpace == string::npos || lastNonSpace == string::npos ||
-            body[firstNonSpace] != '{' || body[lastNonSpace] != '}')
-        {
-            return badRequest("Invalid JSON");
+            const User& updatedUser = patchResult.second.value();
+            nlohmann::json resJson;
+            resJson["id"] = updatedUser.id;
+            resJson["name"] = updatedUser.name;
+            resJson["email"] = updatedUser.email;
+            return HttpResponse(200, "application/json", resJson.dump());
         }
 
-        string name;
-        string email;
-
-        // Try extracting name
-        if (!hasJsonKey(body, "name"))
-        {
-            return badRequest("Missing name");
-        }
-        if (!extractJsonString(body, "name", name))
-        {
-            return badRequest("Invalid JSON");
-        }
-        if (name.empty())
-        {
-            return badRequest("Missing name");
-        }
-
-        // Try extracting email
-        if (!hasJsonKey(body, "email"))
-        {
-            return badRequest("Missing email");
-        }
-        if (!extractJsonString(body, "email", email))
-        {
-            return badRequest("Invalid JSON");
-        }
-        if (email.empty())
-        {
-            return badRequest("Missing email");
-        }
-        if (!isValidEmail(email))
-        {
-            return badRequest("Invalid email");
-        }
-
-        auto updatedOpt = userStore.updateUser(id, name, email);
-        if (!updatedOpt.has_value())
-        {
-            return notFound("User not found");
-        }
-        const User& updated = updatedOpt.value();
-
-        string json =
-            "{"
-            "\"id\":" + to_string(updated.id) + ","
-            "\"name\":\"" + escapeJsonString(updated.name) + "\","
-            "\"email\":\"" + escapeJsonString(updated.email) + "\""
-            "}";
-
-        return HttpResponse(200, "application/json", json);
-    }
-
-    // ========================================================
-    // PATCH /api/users?id=N
-    // ========================================================
-
-    if (path == "/api/users" &&
-        method == "PATCH")
-    {
-        // Content-Type validation
-        string contentType = request.getHeader("Content-Type");
-        if (contentType.find("application/json") == string::npos)
-        {
-            return HttpResponse(415, "Unsupported Media Type", "text/plain", "Unsupported Media Type");
-        }
-
-        string idString = request.getQueryParameter("id");
-        if (idString.empty())
-        {
-            return badRequest("Missing user id");
-        }
-        for (char c : idString)
-        {
-            if (!isdigit(static_cast<unsigned char>(c)))
-            {
-                return badRequest("Invalid user id");
+        // --- DELETE Method ---
+        else if (method == "DELETE") {
+            if (!hasId) {
+                return jsonError(400, "MISSING_FIELD", "Missing required query parameter or path parameter: id");
             }
-        }
-        int id = stoi(idString);
-
-        string body = request.getBody();
-
-        // Basic JSON validation
-        size_t firstNonSpace = body.find_first_not_of(" \t\r\n");
-        size_t lastNonSpace = body.find_last_not_of(" \t\r\n");
-        if (firstNonSpace == string::npos || lastNonSpace == string::npos ||
-            body[firstNonSpace] != '{' || body[lastNonSpace] != '}')
-        {
-            return badRequest("Invalid JSON");
-        }
-
-        bool hasName = hasJsonKey(body, "name");
-        bool hasEmail = hasJsonKey(body, "email");
-
-        if (!hasName && !hasEmail)
-        {
-            return badRequest("Invalid JSON");
-        }
-
-        string name = "";
-        string email = "";
-
-        if (hasName)
-        {
-            if (!extractJsonString(body, "name", name))
-            {
-                return badRequest("Invalid JSON");
+            bool deleted = UserStore::removeUser(id);
+            if (!deleted) {
+                return jsonError(404, "USER_NOT_FOUND", "User with id " + to_string(id) + " was not found");
             }
-            if (name.empty())
-            {
-                return badRequest("Missing name");
-            }
+            return HttpResponse(204, "application/json", "");
         }
 
-        if (hasEmail)
-        {
-            if (!extractJsonString(body, "email", email))
-            {
-                return badRequest("Invalid JSON");
-            }
-            if (email.empty())
-            {
-                return badRequest("Missing email");
-            }
-            if (!isValidEmail(email))
-            {
-                return badRequest("Invalid email");
-            }
+        // --- Unsupported Method ---
+        else {
+            HttpResponse response = jsonError(405, "METHOD_NOT_ALLOWED", "Method not allowed. Allowed methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
+            response.setHeader("Allow", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+            return response;
         }
-
-        auto updatedOpt = userStore.patchUser(id, name, email);
-        if (!updatedOpt.has_value())
-        {
-            return notFound("User not found");
-        }
-        const User& updated = updatedOpt.value();
-
-        string json =
-            "{"
-            "\"id\":" + to_string(updated.id) + ","
-            "\"name\":\"" + escapeJsonString(updated.name) + "\","
-            "\"email\":\"" + escapeJsonString(updated.email) + "\""
-            "}";
-
-        return HttpResponse(200, "application/json", json);
-    }
-
-
-    // ========================================================
-    // DELETE /api/users?id=N
-    // ========================================================
-
-    if (path == "/api/users" &&
-        method == "DELETE")
-    {
-        string idString =
-            request.getQueryParameter("id");
-
-
-        // ----------------------------------------------------
-        // Missing ID
-        // ----------------------------------------------------
-
-        if (idString.empty())
-        {
-            return badRequest("Missing user id");
-        }
-
-
-        // ----------------------------------------------------
-        // Validate ID
-        // ----------------------------------------------------
-
-        for (char c : idString)
-        {
-            if (!isdigit(
-                    static_cast<unsigned char>(c)))
-            {
-                return badRequest("Invalid user id");
-            }
-        }
-
-
-        int id =
-            stoi(idString);
-
-
-        // ----------------------------------------------------
-        // Delete user
-        // ----------------------------------------------------
-
-        bool deleted =
-            userStore.removeUser(id);
-
-
-        if (!deleted)
-        {
-            return notFound("User not found");
-        }
-
-
-        // ----------------------------------------------------
-        // Successful deletion
-        // ----------------------------------------------------
-
-        return HttpResponse(
-            204,
-            "No Content",
-            "text/plain",
-            ""
-        );
-    }
-
-
-    // ========================================================
-    // /api/users - Unsupported Methods
-    // ========================================================
-
-    if (path == "/api/users")
-    {
-        return methodNotAllowed(
-            "GET, POST, DELETE"
-        );
     }
 
 
@@ -1259,4 +1116,15 @@ HttpResponse RouteHandler::payloadTooLarge(
         "text/plain",
         message
     );
+}
+
+HttpResponse RouteHandler::jsonError(
+    int statusCode,
+    const string& code,
+    const string& message)
+{
+    nlohmann::json err;
+    err["error"]["code"] = code;
+    err["error"]["message"] = message;
+    return HttpResponse(statusCode, "application/json", err.dump());
 }
