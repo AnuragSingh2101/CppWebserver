@@ -1,0 +1,22 @@
+[
+    {
+        "concurrency": 1,
+        "throughput": 0.013934062817583187,
+        "latency": 2033.3408290908583
+    },
+    {
+        "concurrency": 2,
+        "throughput": 0.0,
+        "latency": 0
+    },
+    {
+        "concurrency": 4,
+        "throughput": 0.0,
+        "latency": 0
+    },
+    {
+        "concurrency": 8,
+        "throughput": 0.0,
+        "latency": 0
+    }
+]

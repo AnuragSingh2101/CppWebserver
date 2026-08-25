@@ -301,8 +301,13 @@ HttpResponse RouteHandler::handleRequest(
     // ========================================================
     // Security: Prevent Directory Traversal
     // ========================================================
+    string decodedPath;
+    if (!Router::urlDecode(path, decodedPath))
+    {
+        return badRequest("Invalid percent encoding");
+    }
 
-    if (path.find("..") != string::npos)
+    if (decodedPath.find("..") != string::npos)
     {
         return forbidden(
             "Directory traversal is not allowed"
@@ -563,7 +568,15 @@ HttpResponse RouteHandler::handleRequest(
             res.dump()
         );
     }
+    if (path == "/api/time")
+    {
+        return methodNotAllowed("GET, OPTIONS");
+    }
 
+    if (path == "/api/info")
+    {
+        return methodNotAllowed("GET, OPTIONS");
+    }
 
     // ========================================================
     // GET, POST, PUT, PATCH, DELETE /api/users

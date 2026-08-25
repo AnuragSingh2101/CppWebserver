@@ -51,6 +51,9 @@ public:
         const std::string& email
     );
 
+    // Reset/clear user store (useful for tests)
+    static void clear();
+
 private:
     static std::vector<User> users;
     static int nextId;

@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <fstream>
 
-std::string g_documentRoot = "test_public";
+extern std::string g_documentRoot;
 
 TEST(RouterTest, URLDecodeNormal) {
     std::string decoded;
@@ -33,6 +33,9 @@ TEST(RouterTest, GetMimeTypes) {
 }
 
 TEST(RouterTest, PathTraversalBlocked) {
+    std::string oldRoot = g_documentRoot;
+    g_documentRoot = "test_public";
+
     // Setup temporary public folder
     std::filesystem::create_directory("test_public");
     std::filesystem::create_directory("test_public/subdir");
@@ -73,4 +76,5 @@ TEST(RouterTest, PathTraversalBlocked) {
 
     // Cleanup
     std::filesystem::remove_all("test_public");
+    g_documentRoot = oldRoot;
 }

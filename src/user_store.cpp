@@ -164,3 +164,9 @@ std::pair<StoreResult, std::optional<User>> UserStore::patchUser(
     }
     return {StoreResult::SUCCESS, *targetUser};
 }
+
+void UserStore::clear() {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    users.clear();
+    nextId = 1;
+}
